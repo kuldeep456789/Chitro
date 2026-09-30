@@ -1,0 +1,173 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+}
+
+enum OtpPurpose {
+  REGISTER
+  PASSWORD_RESET
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  username     String    @unique
+  passwordHash String
+  displayName  String
+  avatarUrl    String?
+  bio          String?
+  isVerified   Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  memberships          ConversationMember[]
+  sentMessages         Message[]
+  createdConversations Conversation[]       @relation("CreatedConversations")
+  sessions             Session[]
+  reactions            MessageReaction[]
+  sentConnections      UserConnection[]     @relation("SentConnections")
+  receivedConnections  UserConnection[]     @relation("ReceivedConnections")
+
+  @@index([email])
+  @@index([username])
+}
+
+model OtpChallenge {
+  id        String     @id @default(uuid())
+  email     String
+  codeHash  String
+  purpose   OtpPurpose @default(REGISTER)
+  expiresAt DateTime
+  attempts  Int        @default(0)
+  isUsed    Boolean    @default(false)
+  createdAt DateTime   @default(now())
+
+  @@index([email, purpose, isUsed])
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Conversation {
+  id          String           @id @default(uuid())
+  type        ConversationType @default(DIRECT)
+  name        String?
+  description String?
+  avatarUrl   String?
+  pairKey     String?          @unique
+  createdById String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  creator  User                 @relation("CreatedConversations", fields: [createdById], references: [id], onDelete: Cascade)
+  members  ConversationMember[]
+  messages Message[]
+
+  @@index([pairKey])
+}
+
+model ConversationMember {
+  id                String     @id @default(uuid())
+  conversationId    String
+  userId            String
+  role              MemberRole @default(MEMBER)
+  joinedAt          DateTime   @default(now())
+  lastReadMessageId String?
+  lastReadAt        DateTime?
+  mutedAt           DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model Message {
+  id              String      @id @default(uuid())
+  conversationId  String
+  senderId        String
+  clientMessageId String?
+  type            MessageType @default(TEXT)
+  text            String
+  replyToId       String?
+  createdAt       DateTime    @default(now())
+  editedAt        DateTime?
+  deletedAt       DateTime?
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  reactions    MessageReaction[]
+
+  @@unique([senderId, clientMessageId])
+  @@index([conversationId, createdAt, id])
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+}
+
+model UserConnection {
+  id          String           @id @default(uuid())
+  pairKey     String           @unique // sorted: min(userA,userB)_max(userA,userB)
+  requesterId String
+  recipientId String
+  status      ConnectionStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  requester User @relation("SentConnections", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipient User @relation("ReceivedConnections", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([requesterId, status])
+  @@index([recipientId, status])
+  @@index([pairKey])
+}
